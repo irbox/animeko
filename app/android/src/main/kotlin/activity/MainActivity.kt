@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024 OpenAni and contributors.
  *
- * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is subject to GNU AFFERO GENERAL PUBLIC LICENSE version 3 License Restrictions, The license can be found at the following link.
  * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
  *
  * https://github.com/open-ani/ani/blob/main/LICENSE
@@ -82,7 +82,7 @@ class MainActivity : AniComponentActivity() {
                 try {
                     if (!aniNavigator.isNavControllerReady()) {
                         aniNavigator.awaitNavController()
-                        delay(1000) // 等待初始化好, 否则跳转可能无效
+                        delay(1000) // Wait for initialization, otherwise the jump may be invalid
                     }
                     aniNavigator.navigateSubjectDetails(id)
                 } catch (e: Exception) {
@@ -97,19 +97,19 @@ class MainActivity : AniComponentActivity() {
         handleStartIntent(intent)
 
         enableEdgeToEdge(
-            // 透明状态栏
+            // Transparent status bar
             statusBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
             ),
-            // 透明导航栏
+            // Transparent navigation bar
             navigationBarStyle = SystemBarStyle.auto(
                 android.graphics.Color.TRANSPARENT,
                 android.graphics.Color.TRANSPARENT,
             ),
         )
 
-        // 允许画到 system bars
+        // Allow drawing onto system bars
         WindowCompat.setDecorFitsSystemWindows(window, false)
 
         val toaster = object : Toaster {
