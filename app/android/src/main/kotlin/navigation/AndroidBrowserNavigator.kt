@@ -46,7 +46,7 @@ class AndroidBrowserNavigator : BrowserNavigator {
         }
         kotlin.runCatching {
             context.startActivity(browserIntent)
-        } // 未安装 QQ
+        } // QQ is not installed
     }
 }
 
