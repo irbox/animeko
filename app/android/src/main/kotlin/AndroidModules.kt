@@ -1,7 +1,7 @@
 /*
  * Copyright (C) 2024 OpenAni and contributors.
  *
- * 此源代码的使用受 GNU AFFERO GENERAL PUBLIC LICENSE version 3 许可证的约束, 可以在以下链接找到该许可证.
+ * Use of this source code is governed by the GNU AFFERO GENERAL PUBLIC LICENSE version 3 license, which can be found at the following link.
  * Use of this source code is governed by the GNU AGPLv3 license, which can be found at the following link.
  *
  * https://github.com/open-ani/ani/blob/main/LICENSE
@@ -104,14 +104,14 @@ fun getAndroidModules(
             val settings = get<SettingsRepository>().mediaCacheSettings
             val dir = settings.flow.first().saveDir
 
-            // 首次启动设置为应用内部私有目录
+            // Set to the private directory inside the application when launching for the first time
             if (dir == null) {
                 settings.update { copy(saveDir = defaultTorrentCachePath) }
                 return@runBlocking defaultTorrentCachePath
             }
 
             if (dir.startsWith(context.filesDir.absolutePath)) {
-                // 在设置中保存的是私有目录，直接返回
+                // The private directory is saved in the settings, return directly
                 return@runBlocking dir
             }
 
@@ -120,7 +120,7 @@ fun getAndroidModules(
 //
 //                if (storage != null && dir.startsWith(storage)) {
 //                    return@runBlocking if (p.isReadPermission && p.isWritePermission) {
-//                        // 需要再次验证目录权限
+//                        // You need to verify the directory permissions again
 //                        try {
 //                            withContext(Dispatchers.IO) {
 //                                File(storage).resolve("pieces/.nomedia")
@@ -130,7 +130,7 @@ fun getAndroidModules(
 //                            }
 //                            dir
 //                        } catch (ex: IOException) {
-//                            // 实际上没有权限，释放 uri
+//                            // Actually no permission, release uri
 //                            logger.warn(ex) { "failed to write to .nomedia" }
 //                            context.contentResolver.releasePersistableUriPermission(
 //                                p.uri, Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION,
@@ -138,22 +138,22 @@ fun getAndroidModules(
 //                            resetToDefault()
 //                        }
 //                    } else {
-//                        // 在设置中保存的外部共享目录没有完整的读写权限，直接切换回默认的内部私有目录,
-//                        // 避免读写权限不足错误导致 App 崩溃
+//                        // The external shared directory saved in the settings does not have full read and write permissions, so switch directly back to the default internal private directory,
+//                        // Avoid App crashes caused by insufficient read and write permissions
 //                        resetToDefault()
 //                    }
 //                }
 //            }
 
-            // 检查外部私有目录
+            // Checking external private directories
             if (context.getExternalFilesDir(null) == null) {
-                // 外部私有目录不可用，直接切换回默认的私有目录，避免读写权限不足错误导致 App 崩溃
+                // The external private directory is unavailable, so switch back to the default private directory to avoid App crashes caused by insufficient read and write permissions.
                 settings.update { copy(saveDir = defaultTorrentCachePath) }
-                Toast.makeText(context, "BT 存储位置不可用，已切换回默认存储位置", Toast.LENGTH_LONG).show()
+                Toast.makeText(context, "BT storage location is unavailable, switched back to default storage location", Toast.LENGTH_LONG).show()
                 return@runBlocking defaultTorrentCachePath
             }
 
-            // 外部私有目录可用
+            // External private directory available
             dir
         }
         
