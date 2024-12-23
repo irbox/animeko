@@ -73,7 +73,7 @@ import me.him188.ani.app.ui.foundation.layout.cardVerticalPadding
 import me.him188.ani.app.ui.foundation.layout.currentWindowAdaptiveInfo1
 import me.him188.ani.app.ui.foundation.layout.paneVerticalPadding
 import me.him188.ani.app.ui.foundation.theme.AniThemeDefaults
-import me.him188.ani.app.ui.foundation.widgets.TopAppBarGoBackButton
+import me.him188.ani.app.ui.foundation.widgets.BackNavigationIconButton
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
 import me.him188.ani.app.ui.settings.rendering.P2p
 import me.him188.ani.app.ui.settings.tabs.AboutTab
@@ -102,8 +102,8 @@ fun SettingsPage(
     vm: SettingsViewModel,
     modifier: Modifier = Modifier,
     initialTab: SettingsTab? = null,
-    showNavigationIcon: Boolean = false,
     windowInsets: WindowInsets = AniWindowInsets.forPageContent(),
+    navigationIcon: @Composable () -> Unit = {},
 ) {
     val navigator: ThreePaneScaffoldNavigator<SettingsTab> = rememberListDetailPaneScaffoldNavigator(
         initialDestinationHistory = buildList {
@@ -124,7 +124,6 @@ fun SettingsPage(
 
             Title("数据源与播放")
             Item(SettingsTab.PLAYER)
-            Item(SettingsTab.MEDIA_SUBSCRIPTION)
             Item(SettingsTab.MEDIA_SOURCE)
             Item(SettingsTab.MEDIA_SELECTOR)
             Item(SettingsTab.DANMAKU)
@@ -143,7 +142,11 @@ fun SettingsPage(
         },
         tabContent = { currentTab ->
             val tabModifier = Modifier
-            Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 8.dp)) {
+            Column(
+                Modifier
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = SettingsScope.itemExtraHorizontalPadding),
+            ) {
                 when (currentTab) {
                     SettingsTab.ABOUT -> AboutTab({ vm.debugTriggerState.triggerDebugMode() }, tabModifier)
                     SettingsTab.DEBUG -> DebugTab(
@@ -164,14 +167,15 @@ fun SettingsPage(
                                 vm.isInDebugMode,
                             )
 
-                            SettingsTab.MEDIA_SUBSCRIPTION -> MediaSourceSubscriptionGroup(
-                                vm.mediaSourceSubscriptionGroupState,
-                            )
-
-                            SettingsTab.MEDIA_SOURCE -> MediaSourceGroup(
-                                vm.mediaSourceGroupState,
-                                vm.editMediaSourceState,
-                            )
+                            SettingsTab.MEDIA_SOURCE -> {
+                                MediaSourceSubscriptionGroup(
+                                    vm.mediaSourceSubscriptionGroupState,
+                                )
+                                MediaSourceGroup(
+                                    vm.mediaSourceGroupState,
+                                    vm.editMediaSourceState,
+                                )
+                            }
 
                             SettingsTab.MEDIA_SELECTOR -> MediaSelectionGroup(vm.mediaSelectionGroupState)
                             SettingsTab.DANMAKU -> DanmakuGroup(vm.danmakuSettingsState, vm.danmakuServerTesters)
@@ -194,7 +198,7 @@ fun SettingsPage(
         },
         modifier,
         windowInsets,
-        showNavigationIcon = showNavigationIcon,
+        navigationIcon = navigationIcon,
         layoutParameters = layoutParameters,
     )
 }
@@ -208,7 +212,7 @@ internal fun SettingsPageLayout(
     contentWindowInsets: WindowInsets = AniWindowInsets.forPageContent(),
     containerColor: Color = AniThemeDefaults.pageContentBackgroundColor,
     layoutParameters: ListDetailLayoutParameters = ListDetailLayoutParameters.calculate(navigator.scaffoldDirective),
-    showNavigationIcon: Boolean = false,
+    navigationIcon: @Composable () -> Unit = {},
 ) = Surface(color = containerColor) {
     val layoutParametersState by rememberUpdatedState(layoutParameters)
 
@@ -242,8 +246,10 @@ internal fun SettingsPageLayout(
             AniTopAppBar(
                 title = { AniTopAppBarDefaults.Title("设置") },
                 navigationIcon = {
-                    if (showNavigationIcon) {
-                        TopAppBarGoBackButton()
+                    if (navigator.canNavigateBack()) {
+                        BackNavigationIconButton({ navigator.navigateBack() })
+                    } else {
+                        navigationIcon()
                     }
                 },
                 colors = AniThemeDefaults.transparentAppBarColors(),
@@ -302,9 +308,9 @@ internal fun SettingsPageLayout(
                             },
                             navigationIcon = {
                                 if (listDetailLayoutParameters.isSinglePane) {
-                                    TopAppBarGoBackButton {
-                                        navigator.navigateBack(BackNavigationBehavior.PopUntilScaffoldValueChange)
-                                    }
+                                    BackNavigationIconButton(
+                                        { navigator.navigateBack(BackNavigationBehavior.PopUntilScaffoldValueChange) },
+                                    )
                                 }
                             },
                             colors = AniThemeDefaults.transparentAppBarColors(),
@@ -356,7 +362,6 @@ private fun getIcon(tab: SettingsTab): ImageVector {
         SettingsTab.APPEARANCE -> Icons.Rounded.Palette
         SettingsTab.UPDATE -> Icons.Rounded.Update
         SettingsTab.PLAYER -> Icons.Rounded.SmartDisplay
-        SettingsTab.MEDIA_SUBSCRIPTION -> Icons.Rounded.Subscriptions
         SettingsTab.MEDIA_SOURCE -> Icons.Rounded.Subscriptions
         SettingsTab.MEDIA_SELECTOR -> Icons.Rounded.FilterList
         SettingsTab.DANMAKU -> Icons.Rounded.Subtitles
@@ -375,7 +380,6 @@ private fun getName(tab: SettingsTab): String {
         SettingsTab.APPEARANCE -> "界面"
         SettingsTab.UPDATE -> "软件更新"
         SettingsTab.PLAYER -> "播放器和弹幕过滤"
-        SettingsTab.MEDIA_SUBSCRIPTION -> "数据源订阅"
         SettingsTab.MEDIA_SOURCE -> "数据源管理"
         SettingsTab.MEDIA_SELECTOR -> "观看偏好"
         SettingsTab.DANMAKU -> "弹幕源"
@@ -383,7 +387,7 @@ private fun getName(tab: SettingsTab): String {
         SettingsTab.BT -> "BitTorrent"
         SettingsTab.CACHE -> "自动缓存"
         SettingsTab.STORAGE -> "存储空间"
-        SettingsTab.ABOUT -> "关于"
+        SettingsTab.ABOUT -> "关于，反馈与日志"
         SettingsTab.DEBUG -> "调试"
     }
 }

@@ -55,6 +55,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.contentColorFor
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.derivedStateOf
@@ -78,6 +79,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import androidx.window.core.layout.WindowHeightSizeClass
 import androidx.window.core.layout.WindowWidthSizeClass
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -105,6 +107,7 @@ import me.him188.ani.app.ui.foundation.layout.LocalPlatformWindow
 import me.him188.ani.app.ui.foundation.layout.compareTo
 import me.him188.ani.app.ui.foundation.layout.currentWindowAdaptiveInfo1
 import me.him188.ani.app.ui.foundation.layout.desktopTitleBarPadding
+import me.him188.ani.app.ui.foundation.layout.isSystemInFullscreen
 import me.him188.ani.app.ui.foundation.layout.setRequestFullScreen
 import me.him188.ani.app.ui.foundation.layout.setSystemBarVisible
 import me.him188.ani.app.ui.foundation.navigation.BackHandler
@@ -158,13 +161,13 @@ private fun EpisodeSceneContent(
     modifier: Modifier = Modifier,
     windowInsets: WindowInsets = ScaffoldDefaults.contentWindowInsets,
 ) {
-    // 处理当用户点击返回键时, 如果是全屏, 则退出全屏
-    val navigator = LocalNavigator.current
-    BackHandler {
-        vm.stopPlaying()
-        navigator.popBackStack()
+    DisposableEffect(vm) {
+        onDispose {
+            vm.stopPlaying()
+        }
     }
 
+    // 处理当用户点击返回键时, 如果是全屏, 则退出全屏
     // 按返回退出全屏
     val context by rememberUpdatedState(LocalContext.current)
     val window = LocalPlatformWindow.current
@@ -202,11 +205,22 @@ private fun EpisodeSceneContent(
     }
 
     BoxWithConstraints(modifier) {
-        val showExpandedUI =
-            currentWindowAdaptiveInfo1().windowSizeClass.windowWidthSizeClass >= WindowWidthSizeClass.EXPANDED
+        val windowSizeClass = currentWindowAdaptiveInfo1().windowSizeClass
+        val width = windowSizeClass.windowWidthSizeClass
+        val height = windowSizeClass.windowHeightSizeClass
+
+        val showExpandedUI = when {
+            width == WindowWidthSizeClass.COMPACT && height == WindowHeightSizeClass.COMPACT -> false
+            width == WindowWidthSizeClass.COMPACT && height > WindowHeightSizeClass.COMPACT -> false
+            width > WindowWidthSizeClass.COMPACT && height == WindowHeightSizeClass.COMPACT -> true // #1279
+            windowSizeClass.windowWidthSizeClass >= WindowWidthSizeClass.EXPANDED -> true // #932
+            else -> false
+        }
         CompositionLocalProvider(LocalImageViewerHandler provides imageViewer) {
             when {
-                showExpandedUI -> EpisodeSceneTabletVeryWide(vm, Modifier.fillMaxSize(), windowInsets)
+                showExpandedUI || isSystemInFullscreen() ->
+                    EpisodeSceneTabletVeryWide(vm, Modifier.fillMaxSize(), windowInsets)
+
                 else -> EpisodeSceneContentPhone(vm, Modifier.fillMaxSize(), windowInsets)
             }
         }
@@ -300,7 +314,7 @@ private fun EpisodeSceneTabletVeryWide(
                                 vm.editableSubjectCollectionTypeState,
                                 vm.danmakuStatistics,
                                 vm.videoStatistics,
-                                vm.mediaSelectorPresentation,
+                                vm.mediaSelectorState,
                                 vm.mediaSourceResultsPresentation,
                                 vm.authState,
                                 onSwitchEpisode = { episodeId ->
@@ -421,7 +435,7 @@ private fun EpisodeSceneContentPhone(
                 vm.editableSubjectCollectionTypeState,
                 vm.danmakuStatistics,
                 vm.videoStatistics,
-                vm.mediaSelectorPresentation,
+                vm.mediaSelectorState,
                 vm.mediaSourceResultsPresentation,
                 vm.authState,
                 onSwitchEpisode = { episodeId ->
@@ -508,10 +522,11 @@ private fun DetachedDanmakuEditorLayout(
 ) {
     Column(modifier.padding(all = 16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         Text("发送弹幕", style = MaterialTheme.typography.titleMedium)
+        val isSending = videoDanmakuState.isSending.collectAsStateWithLifecycle()
         DanmakuEditor(
             text = videoDanmakuState.danmakuEditorText,
             onTextChange = { videoDanmakuState.danmakuEditorText = it },
-            isSending = videoDanmakuState.isSending,
+            isSending = { isSending.value },
             placeholderText = remember { randomDanmakuPlaceholder() },
             onSend = onSend,
             Modifier.fillMaxWidth().focusRequester(focusRequester),
@@ -685,7 +700,7 @@ private fun EpisodeVideo(
             vm.sidebarVisible = it
         },
         progressSliderState = progressSliderState,
-        mediaSelectorPresentation = vm.mediaSelectorPresentation,
+        mediaSelectorState = vm.mediaSelectorState,
         mediaSourceResultsPresentation = vm.mediaSourceResultsPresentation,
         episodeSelectorState = vm.episodeSelectorState,
         mediaSourceInfoProvider = vm.mediaSourceInfoProvider,

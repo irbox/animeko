@@ -24,8 +24,24 @@ import me.him188.ani.utils.platform.trimSB
 object MediaListFilters {
     val ContainsSubjectName = BasicMediaListFilter { media ->
         subjectNamesWithoutSpecial.any { subjectName ->
-            removeSpecials(media.originalTitle, removeWhitespace = true, replaceNumbers = true)
+            val originalTitle = removeSpecials(media.originalTitle, removeWhitespace = true, replaceNumbers = true)
+            fun exactlyContains() = originalTitle
                 .contains(subjectName, ignoreCase = true)
+
+            fun fuzzyMatches() = StringMatcher.calculateMatchRate(originalTitle, subjectName) >= 80
+
+//            println(
+//                when {
+//                    exactlyContains() -> "'$originalTitle' included because exactlyContains()"
+//                    fuzzyMatches() -> "'$originalTitle' included because fuzzyMatches() at " + StringMatcher.calculateMatchRate(
+//                        originalTitle,
+//                        subjectName,
+//                    )
+//
+//                    else -> {}
+//                },
+//            )
+            exactlyContains() || fuzzyMatches()
         }
     }
 
@@ -72,8 +88,8 @@ object MediaListFilters {
         put("一", "1")
     }
     private val allNumbersRegex = numberMappings.keys.joinToString("|").toRegex()
-    private val specialCharRegex = Regex("""[~!@#$%^&*()_+{}\[\]\\|;':",.<>/?【】：～「」]""")
-    private val replaceWithWhitespace = Regex("""[。、，]""")
+    private val toDelete = Regex("""[~!@#$%^&*()_+{}\[\]\\|;':",.<>/?【】：～「」！―]""")
+    private val replaceWithWhitespace = Regex("""[。、，·]""")
     private val whitespaceRegex = Regex("""[ 	\s+]""")
 
 
@@ -86,7 +102,7 @@ object MediaListFilters {
      * 这些词在标题中将保证被原封不动保留
      */
     private val keepWords = listOf("Re：").mapIndexed { index, s ->
-        KeepWords(s, "\uE001$index") // \uE001 是一个不常用的字符
+        KeepWords(s, "\uE001$index\uE002") // \uE001 是一个不常用的字符
     }
 
 
@@ -113,7 +129,7 @@ object MediaListFilters {
             deleteInfix("剧场版")
             deletePrefix("OVA")
             deleteInfix("OVA")
-            deleteMatches(specialCharRegex)
+            deleteMatches(toDelete)
             if (replaceNumbers) {
                 replaceMatches(allNumbersRegex) { numberMappings.getValue(it.value) }
             }

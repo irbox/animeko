@@ -52,11 +52,12 @@ import kotlin.test.assertNull
  * @see MediaSelectorAutoSelect
  */
 class MediaSelectorAutoSelectTest {
-    private val mediaList: MutableStateFlow<MutableList<DefaultMedia>> = MutableStateFlow(
-        TestMediaList.toMutableList(),
+    private val mediaList: MutableStateFlow<List<DefaultMedia>> = MutableStateFlow(
+        TestMediaList,
     )
+
     private fun addMedia(vararg media: DefaultMedia) {
-        mediaList.value.addAll(media)
+        mediaList.value = mediaList.value + media
     }
 
     private val savedUserPreference = MutableStateFlow(DEFAULT_PREFERENCE)
@@ -67,16 +68,8 @@ class MediaSelectorAutoSelectTest {
             subjectFinished = false,
             mediaSourcePrecedence = emptyList(),
             subtitlePreferences = MediaSelectorSubtitlePreferences.AllNormal,
+            subjectSequelNames = emptySet(),
         ),
-    )
-
-    private val selector = DefaultMediaSelector(
-        mediaSelectorContextNotCached = mediaSelectorContext,
-        mediaListNotCached = mediaList,
-        savedUserPreference = savedUserPreference,
-        savedDefaultPreference = savedDefaultPreference,
-        enableCaching = false,
-        mediaSelectorSettings = mediaSelectorSettings,
     )
 
     companion object {
@@ -114,10 +107,19 @@ class MediaSelectorAutoSelectTest {
         MediaFetchRequest(
             subjectId = "1",
             episodeId = "1",
-            subjectNames = setOf("孤独摇滚"),
+            subjectNames = listOf("孤独摇滚"),
             episodeSort = EpisodeSort(1),
             episodeName = "test",
         ),
+    )
+
+    private var selector = DefaultMediaSelector(
+        mediaSelectorContextNotCached = mediaSelectorContext,
+        mediaListNotCached = mediaList,
+        savedUserPreference = savedUserPreference,
+        savedDefaultPreference = savedDefaultPreference,
+        enableCaching = false,
+        mediaSelectorSettings = mediaSelectorSettings,
     )
 
     private val autoSelect get() = selector.autoSelect
@@ -187,13 +189,13 @@ class MediaSelectorAutoSelectTest {
             MediaFetchRequest(
                 subjectId = "1",
                 episodeId = "1",
-                subjectNames = setOf("孤独摇滚"),
+                subjectNames = listOf("孤独摇滚"),
                 episodeSort = EpisodeSort(1),
                 episodeName = "test",
             ),
         )
     }
-    
+
     ///////////////////////////////////////////////////////////////////////////
     // awaitCompletedAndSelectDefault
     ///////////////////////////////////////////////////////////////////////////

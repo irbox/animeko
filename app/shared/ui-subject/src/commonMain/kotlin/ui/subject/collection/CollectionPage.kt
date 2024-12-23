@@ -66,6 +66,7 @@ import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.paging.LoadState
 import androidx.paging.LoadStates
 import androidx.paging.PagingData
@@ -75,13 +76,13 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.launch
 import me.him188.ani.app.data.models.UserInfo
+import me.him188.ani.app.data.models.preference.NsfwMode
 import me.him188.ani.app.data.models.subject.SubjectCollectionCounts
 import me.him188.ani.app.data.models.subject.SubjectCollectionInfo
 import me.him188.ani.app.data.models.subject.toNavPlaceholder
 import me.him188.ani.app.data.repository.subject.CollectionsFilterQuery
 import me.him188.ani.app.domain.session.AuthState
 import me.him188.ani.app.navigation.LocalNavigator
-import me.him188.ani.app.navigation.SubjectDetailPlaceholder
 import me.him188.ani.app.ui.adaptive.AniTopAppBar
 import me.him188.ani.app.ui.adaptive.AniTopAppBarDefaults
 import me.him188.ani.app.ui.foundation.LocalPlatform
@@ -93,6 +94,7 @@ import me.him188.ani.app.ui.foundation.session.SelfAvatar
 import me.him188.ani.app.ui.foundation.session.SessionTipsArea
 import me.him188.ani.app.ui.foundation.session.SessionTipsIcon
 import me.him188.ani.app.ui.foundation.theme.AniThemeDefaults
+import me.him188.ani.app.ui.foundation.widgets.NsfwMask
 import me.him188.ani.app.ui.foundation.widgets.PullToRefreshBox
 import me.him188.ani.app.ui.subject.collection.components.EditableSubjectCollectionTypeState
 import me.him188.ani.app.ui.subject.collection.progress.EpisodeListStateFactory
@@ -189,7 +191,15 @@ fun CollectionPage(
 ) {
     // 如果有缓存, 列表区域要展示缓存, 错误就用图标放在角落
     CollectionPageLayout(
-        onClickSettings = onClickSettings,
+        settingsIcon = {
+            if (state.authState.isKnownGuest // #1269 游客模式下无法打开设置界面
+                || currentWindowAdaptiveInfo1().windowSizeClass.windowWidthSizeClass.isAtLeastMedium
+            ) {
+                IconButton(onClick = onClickSettings) {
+                    Icon(Icons.Rounded.Settings, "设置")
+                }
+            }
+        },
         actions = {
             SessionTipsIcon(state.authState)
             actions()
@@ -249,12 +259,19 @@ fun CollectionPage(
                     SubjectCollectionsColumn(
                         items,
                         item = { collection ->
-                            SubjectCollectionItem(
-                                collection,
-                                state.episodeListStateFactory,
-                                state.subjectProgressStateFactory,
-                                state.createEditableSubjectCollectionTypeState(collection),
-                            )
+                            var nsfwModeState: NsfwMode by rememberSaveable { mutableStateOf(collection.nsfwMode) }
+                            NsfwMask(
+                                nsfwModeState,
+                                onTemporarilyDisplay = { nsfwModeState = NsfwMode.DISPLAY },
+                                shape = SubjectCollectionItemDefaults.shape,
+                            ) {
+                                SubjectCollectionItem(
+                                    collection,
+                                    state.episodeListStateFactory,
+                                    state.subjectProgressStateFactory,
+                                    state.createEditableSubjectCollectionTypeState(collection),
+                                )
+                            }
                         },
                         enableAnimation = enableAnimation,
                         gridState = lazyGridState,
@@ -271,7 +288,7 @@ fun CollectionPage(
  */
 @Composable
 private fun CollectionPageLayout(
-    onClickSettings: () -> Unit,
+    settingsIcon: @Composable () -> Unit,
     actions: @Composable RowScope.() -> Unit,
     avatar: @Composable (recommendedSize: DpSize) -> Unit,
     filters: @Composable CollectionPageFilters.() -> Unit,
@@ -303,11 +320,7 @@ private fun CollectionPageLayout(
                             }
                         }
 
-                        if (currentWindowAdaptiveInfo1().windowSizeClass.windowWidthSizeClass.isAtLeastMedium) {
-                            IconButton(onClick = onClickSettings) {
-                                Icon(Icons.Rounded.Settings, "设置")
-                            }
-                        }
+                        settingsIcon()
                     },
                     avatar = avatar,
                     windowInsets = AniWindowInsets.forTopAppBarWithoutDesktopTitle(),
@@ -445,13 +458,15 @@ private fun SubjectCollectionItem(
             showEpisodeProgressDialog = true
         },
         playButton = {
+            val editableSubjectCollectionTypePresentation by editableSubjectCollectionTypeState.presentationFlow.collectAsStateWithLifecycle()
+
             if (type != UnifiedCollectionType.DONE) {
                 if (subjectProgressState.isDone) {
                     FilledTonalButton(
                         {
                             editableSubjectCollectionTypeState.setSelfCollectionType(UnifiedCollectionType.DONE)
                         },
-                        enabled = !editableSubjectCollectionTypeState.isSetSelfCollectionTypeWorking,
+                        enabled = !editableSubjectCollectionTypePresentation.isSetSelfCollectionTypeWorking,
                     ) {
                         Text("移至\"看过\"", Modifier.requiredWidth(IntrinsicSize.Max), softWrap = false)
                     }

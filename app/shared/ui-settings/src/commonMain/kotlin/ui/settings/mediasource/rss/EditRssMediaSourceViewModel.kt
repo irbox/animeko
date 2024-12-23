@@ -10,7 +10,6 @@
 package me.him188.ani.app.ui.settings.mediasource.rss
 
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.mutableStateOf
 import io.ktor.client.plugins.BrowserUserAgent
 import kotlinx.coroutines.Dispatchers
@@ -62,10 +61,11 @@ class EditRssMediaSourceViewModel(
             ) ?: RssMediaSourceArguments.Default
         }
     }
+    
+    private val saveTasker = MonoTasker(backgroundScope)
 
     val state: Flow<EditRssMediaSourceState> = this.instanceId.transformLatest { instanceId ->
         coroutineScope {
-            val saveTasker = MonoTasker(this)
             val arguments = mutableStateOf<RssMediaSourceArguments?>(null)
             val allowEdit = mutableStateOf(false)
             launch {
@@ -92,7 +92,7 @@ class EditRssMediaSourceViewModel(
                                 )
                             }
                         },
-                        isSavingState = derivedStateOf { saveTasker.isRunning },
+                        isSavingFlow = saveTasker.isRunning,
                     ),
                     allowEditState = allowEdit,
                     instanceId = instanceId,

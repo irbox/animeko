@@ -64,8 +64,7 @@ import me.him188.ani.utils.ktor.HttpTokenChecker
 import me.him188.ani.utils.ktor.proxy
 import me.him188.ani.utils.ktor.registerLogging
 import me.him188.ani.utils.logging.error
-import me.him188.ani.utils.logging.logger
-import me.him188.ani.utils.platform.collections.mapToIntArray
+import me.him188.ani.utils.logging.thisLogger
 import me.him188.ani.utils.serialization.toJsonArray
 import kotlin.coroutines.CoroutineContext
 
@@ -156,7 +155,7 @@ class BangumiClientImpl(
 ) : BangumiClient {
     private val scope = CoroutineScope(parentCoroutineContext + SupervisorJob(parentCoroutineContext[Job]))
 
-    private val logger = logger(this::class)
+    private val logger = thisLogger()
 
     override suspend fun executeGraphQL(actionName: String, query: String, variables: JsonObject?): JsonObject {
         val resp = try {
@@ -268,7 +267,7 @@ class BangumiClientImpl(
             ratings: List<String>?,
             ranks: List<String>?,
             nsfw: Boolean?,
-        ): IntArray = withContext(Dispatchers.IO) {
+        ): List<BangumiSearchSubjectNewApi>? = withContext(Dispatchers.IO) {
             val resp = httpClient.post("$BANGUMI_API_HOST/v0/search/subjects") {
                 parameter("offset", offset)
                 parameter("limit", limit)
@@ -300,7 +299,7 @@ class BangumiClientImpl(
             }
 
             val body = resp.body<SearchSubjectByKeywordsResponse>()
-            return@withContext body.data?.mapToIntArray { it.id } ?: return@withContext intArrayOf()
+            return@withContext body.data
 //            return body.run {
 //                Paged(
 //                    total,
@@ -393,7 +392,7 @@ class BangumiRateLimitedException : Exception("Rate limited by Bangumi API")
 
 // Caused by: kotlinx.serialization.MissingFieldException: Fields [locked, platform, images, volumes, eps, total_episodes, rating, collection] are required for type with serial name 'me.him188.ani.datasources.bangumi.models.BangumiSubject', but they were missing at path: $.data[0]
 @Serializable
-private data class BangumiSearchSubjectNewApi(
+data class BangumiSearchSubjectNewApi(
     @SerialName(value = "id") @Required val id: Int,
     @SerialName(value = "type") @Required val type: BangumiSubjectType,
     @SerialName(value = "name") @Required val name: String,

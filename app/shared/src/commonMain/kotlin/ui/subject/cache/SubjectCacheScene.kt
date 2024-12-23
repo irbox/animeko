@@ -46,6 +46,7 @@ import me.him188.ani.app.data.models.subject.nameCnOrName
 import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.media.EpisodePreferencesRepository
 import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
+import me.him188.ani.app.data.repository.subject.SubjectRelationsRepository
 import me.him188.ani.app.data.repository.user.SettingsRepository
 import me.him188.ani.app.domain.episode.EpisodeCompletionContext.isKnownCompleted
 import me.him188.ani.app.domain.media.cache.MediaCacheManager
@@ -64,7 +65,6 @@ import me.him188.ani.app.ui.foundation.launchInBackground
 import me.him188.ani.app.ui.foundation.produceState
 import me.him188.ani.app.ui.foundation.stateOf
 import me.him188.ani.app.ui.foundation.theme.AniThemeDefaults
-import me.him188.ani.app.ui.foundation.widgets.TopAppBarGoBackButton
 import me.him188.ani.app.ui.settings.SettingsTab
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
 import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSourceInfoProvider
@@ -98,6 +98,7 @@ class SubjectCacheViewModelImpl(
     private val cacheManager: MediaCacheManager by inject()
     private val mediaSourceManager: MediaSourceManager by inject()
     private val episodePreferencesRepository: EpisodePreferencesRepository by inject()
+    private val subjectRelationsRepository: SubjectRelationsRepository by inject()
 
     private val subjectInfoFlow = subjectCollectionRepository.subjectCollectionFlow(subjectId)
         .retryWithBackoffDelay()
@@ -244,6 +245,7 @@ fun SubjectCacheScene(
     vm: SubjectCacheViewModel,
     modifier: Modifier = Modifier,
     windowInsets: WindowInsets = ScaffoldDefaults.contentWindowInsets,
+    navigationIcon: @Composable () -> Unit = {},
 ) {
     SubjectCachePageScaffold(
         title = {
@@ -275,6 +277,7 @@ fun SubjectCacheScene(
         },
         modifier,
         windowInsets = windowInsets,
+        navigationIcon = navigationIcon,
     )
 }
 
@@ -292,6 +295,7 @@ fun SubjectCachePageScaffold(
     cacheListGroup: @Composable SettingsScope.() -> Unit,
     modifier: Modifier = Modifier,
     windowInsets: WindowInsets = ScaffoldDefaults.contentWindowInsets,
+    navigationIcon: @Composable () -> Unit = {},
 ) {
     val appBarColors = AniThemeDefaults.topAppBarColors()
     Scaffold(
@@ -302,9 +306,7 @@ fun SubjectCachePageScaffold(
                     title = {
                         title()
                     },
-                    navigationIcon = {
-                        TopAppBarGoBackButton()
-                    },
+                    navigationIcon = navigationIcon,
                     colors = appBarColors,
                     windowInsets = windowInsets.only(WindowInsetsSides.Horizontal + WindowInsetsSides.Top),
                 )

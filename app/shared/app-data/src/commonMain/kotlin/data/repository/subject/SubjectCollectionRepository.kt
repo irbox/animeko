@@ -36,6 +36,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.models.episode.EpisodeCollectionInfo
+import me.him188.ani.app.data.models.preference.NsfwMode
 import me.him188.ani.app.data.models.subject.SelfRatingInfo
 import me.him188.ani.app.data.models.subject.SubjectAiringInfo
 import me.him188.ani.app.data.models.subject.SubjectCollectionCounts
@@ -62,6 +63,9 @@ import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.episode.toEntity
 import me.him188.ani.app.data.repository.episode.toEpisodeCollectionInfo
 import me.him188.ani.app.domain.search.SubjectType
+import me.him188.ani.app.domain.session.OpaqueSession
+import me.him188.ani.app.domain.session.SessionManager
+import me.him188.ani.app.domain.session.verifiedAccessToken
 import me.him188.ani.datasources.api.EpisodeType.MainStory
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
@@ -69,6 +73,7 @@ import me.him188.ani.datasources.bangumi.apis.DefaultApi
 import me.him188.ani.datasources.bangumi.models.BangumiUserSubjectCollectionModifyPayload
 import me.him188.ani.datasources.bangumi.processing.toCollectionType
 import me.him188.ani.datasources.bangumi.processing.toSubjectCollectionType
+import me.him188.ani.utils.coroutines.combine
 import me.him188.ani.utils.coroutines.flows.flowOfEmptyList
 import me.him188.ani.utils.logging.logger
 import me.him188.ani.utils.platform.currentTimeMillis
@@ -102,7 +107,7 @@ sealed class SubjectCollectionRepository(
      * 获取本地所有缓存的 [SubjectCollectionInfo] 的 [subjectId][SubjectCollectionInfo.subjectId]
      */
     abstract fun cachedValidSubjectIds(): Flow<List<Int>>
-    
+
     /**
      * 更新根据服务器上记录的最近有修改的条目收藏. 也就是用户最近操作过的条目收藏.
      */
@@ -148,14 +153,21 @@ class SubjectCollectionRepositoryImpl(
     private val animeScheduleRepository: AnimeScheduleRepository,
     private val bangumiEpisodeService: BangumiEpisodeService,
     private val episodeCollectionDao: EpisodeCollectionDao,
+    private val sessionManager: SessionManager,
+    private val nsfwModeSettingsFlow: Flow<NsfwMode>,
     private val getCurrentDate: () -> PackedDate = { PackedDate.now() },
     private val enableAllEpisodeTypes: Flow<Boolean>,
     defaultDispatcher: CoroutineContext = Dispatchers.Default,
 ) : SubjectCollectionRepository(defaultDispatcher) {
+    @OptIn(OpaqueSession::class)
+    private fun <T> Flow<T>.restartOnNewLogin(): Flow<T> =
+        sessionManager.verifiedAccessToken.flatMapLatest { this }
+
     private val epTypeFilter get() = enableAllEpisodeTypes.map { if (it) null else MainStory }
 
     override fun subjectCollectionCountsFlow(): Flow<SubjectCollectionCounts?> {
         return (bangumiSubjectService.subjectCollectionCountsFlow() as Flow<SubjectCollectionCounts?>)
+            .restartOnNewLogin()
             .retry(2)
             .catch {
                 logger.error("Failed to get subject collection counts", it)
@@ -182,6 +194,7 @@ class SubjectCollectionRepositoryImpl(
 
     override fun subjectCollectionFlow(subjectId: Int): Flow<SubjectCollectionInfo> =
         subjectCollectionDao.findById(subjectId)
+            .restartOnNewLogin()
             .onEach {
                 // 如果没有缓存, 则 fetch 然后插入 subject 缓存
                 if (it == null) {
@@ -205,10 +218,12 @@ class SubjectCollectionRepositoryImpl(
             // 有 subject 缓存后才能从 episodeCollectionRepository fetch episodes
             .combine(
                 episodeCollectionRepository.subjectEpisodeCollectionInfosFlow(subjectId),
-            ) { entity, episodes ->
+                nsfwModeSettingsFlow,
+            ) { entity, episodes, nsfwModeSettings ->
                 entity.toSubjectCollectionInfo(
                     episodes = episodes,
                     currentDate = getCurrentDate(),
+                    nsfwModeSettings = nsfwModeSettings,
                 )
             }.flowOn(defaultDispatcher)
 
@@ -216,7 +231,11 @@ class SubjectCollectionRepositoryImpl(
         limit: Int,
         types: List<UnifiedCollectionType>?, // null for all
     ): Flow<List<SubjectCollectionInfo>> = subjectCollectionDao.filterMostRecentUpdated(types, limit)
-        .flatMapLatest { list ->
+        .restartOnNewLogin()
+        .combine(nsfwModeSettingsFlow) { list, nsfwModeSettings ->
+            list to nsfwModeSettings
+        }
+        .flatMapLatest { (list, nsfwModeSettings) ->
             if (list.isEmpty()) {
                 return@flatMapLatest flowOfEmptyList()
             }
@@ -226,6 +245,7 @@ class SubjectCollectionRepositoryImpl(
                         entity.toSubjectCollectionInfo(
                             episodes = episodes,
                             currentDate = getCurrentDate(),
+                            nsfwModeSettings = nsfwModeSettings,
                         )
                     }
                 },
@@ -238,35 +258,38 @@ class SubjectCollectionRepositoryImpl(
     override fun subjectCollectionsPager(
         query: CollectionsFilterQuery,
         pagingConfig: PagingConfig,
-    ): Flow<PagingData<SubjectCollectionInfo>> = epTypeFilter.flatMapLatest { epType ->
-        Pager(
-            config = pagingConfig,
-            initialKey = 0,
-            remoteMediator = SubjectCollectionRemoteMediator(query),
-            pagingSourceFactory = {
-                subjectCollectionDao.filterByCollectionTypePaging(query.type)
-            },
-        ).flow.map { data ->
-
-            data.map { (entity, episodesOfAnyType) ->
-                val date = getCurrentDate()
-                entity.toSubjectCollectionInfo(
-                    episodes = episodesOfAnyType
-                        .asSequence()
-                        .let { sequence ->
-                            if (epType == null) {
-                                sequence
-                            } else {
-                                sequence.filter { it.episodeType == epType }
+    ): Flow<PagingData<SubjectCollectionInfo>> =
+        combine(epTypeFilter, nsfwModeSettingsFlow) { epType, nsfwModeSettings ->
+            epType to nsfwModeSettings
+        }.restartOnNewLogin().flatMapLatest { (epType, nsfwModeSettings) ->
+            Pager(
+                config = pagingConfig,
+                initialKey = 0,
+                remoteMediator = SubjectCollectionRemoteMediator(query),
+                pagingSourceFactory = {
+                    subjectCollectionDao.filterByCollectionTypePaging(query.type)
+                },
+            ).flow.map { data ->
+                data.map { (entity, episodesOfAnyType) ->
+                    val date = getCurrentDate()
+                    entity.toSubjectCollectionInfo(
+                        episodes = episodesOfAnyType
+                            .asSequence()
+                            .let { sequence ->
+                                if (epType == null) {
+                                    sequence
+                                } else {
+                                    sequence.filter { it.episodeType == epType }
+                                }
                             }
-                        }
-                        .map { it.toEpisodeCollectionInfo() }
-                        .toList(),
-                    currentDate = date,
-                )
+                            .map { it.toEpisodeCollectionInfo() }
+                            .toList(),
+                        currentDate = date,
+                        nsfwModeSettings = nsfwModeSettings,
+                    )
+                }
             }
-        }
-    }.flowOn(defaultDispatcher)
+        }.flowOn(defaultDispatcher)
 
     override fun cachedValidSubjectIds(): Flow<List<Int>> {
         return subjectCollectionDao.subjectIdsWithValidEpisodeCollection().flowOn(defaultDispatcher)
@@ -515,6 +538,7 @@ private fun SubjectCollectionEntity.toSubjectInfo(): SubjectInfo {
 private fun SubjectCollectionEntity.toSubjectCollectionInfo(
     episodes: List<EpisodeCollectionInfo>,
     currentDate: PackedDate,
+    nsfwModeSettings: NsfwMode,
 ): SubjectCollectionInfo {
     val subjectInfo = toSubjectInfo()
     return SubjectCollectionInfo(
@@ -533,6 +557,7 @@ private fun SubjectCollectionEntity.toSubjectCollectionInfo(
         cachedStaffUpdated = cachedStaffUpdated,
         cachedCharactersUpdated = cachedCharactersUpdated,
         lastUpdated = lastUpdated,
+        nsfwMode = if (nsfw) nsfwModeSettings else NsfwMode.DISPLAY,
     )
 }
 

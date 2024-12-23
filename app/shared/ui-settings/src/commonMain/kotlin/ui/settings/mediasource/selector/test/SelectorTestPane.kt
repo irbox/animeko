@@ -28,7 +28,6 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
-import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowOutward
@@ -40,6 +39,7 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -47,6 +47,10 @@ import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import me.him188.ani.app.domain.mediasource.test.web.SelectorTestEpisodeListResult
+import me.him188.ani.app.domain.mediasource.test.web.SelectorTestEpisodePresentation
+import me.him188.ani.app.domain.mediasource.test.web.SelectorTestSearchSubjectResult
 import me.him188.ani.app.ui.foundation.layout.cardHorizontalPadding
 import me.him188.ani.app.ui.foundation.layout.cardVerticalPadding
 import me.him188.ani.app.ui.foundation.layout.currentWindowAdaptiveInfo1
@@ -68,11 +72,14 @@ fun SharedTransitionScope.SelectorTestPane(
     modifier: Modifier = Modifier,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
+    val presentation by state.presentation.collectAsStateWithLifecycle(
+        SelectorTestPresentation.Placeholder,
+    )
     val verticalSpacing = currentWindowAdaptiveInfo1().windowSizeClass.cardVerticalPadding
     LazyVerticalGrid(
         columns = GridCells.Adaptive(300.dp),
         modifier,
-        rememberLazyGridState(),
+        state.gridState,
         contentPadding,
         horizontalArrangement = Arrangement.spacedBy(currentWindowAdaptiveInfo1().windowSizeClass.cardHorizontalPadding),
     ) {
@@ -92,29 +99,29 @@ fun SharedTransitionScope.SelectorTestPane(
 
                 RefreshIndicatedHeadlineRow(
                     headline = { Text(SelectorConfigurationDefaults.STEP_NAME_1) },
-                    onRefresh = { state.subjectSearcher.restartCurrentSearch() },
-                    result = state.subjectSearchSelectResult,
+                    onRefresh = { state.restartCurrentSubjectSearch() },
+                    result = presentation.subjectSearchResult,
                     Modifier.padding(top = verticalSpacing),
                 )
 
                 Box(Modifier.height(12.dp), contentAlignment = Alignment.Center) {
                     FastLinearProgressIndicator(
-                        state.subjectSearcher.isSearching,
+                        presentation.isSearchingSubject,
                         delayMillis = 0,
                         minimumDurationMillis = 300,
                     )
                 }
 
                 AnimatedContent(
-                    state.subjectSearchSelectResult,
+                    presentation.subjectSearchResult,
                     transitionSpec = AniThemeDefaults.standardAnimatedContentTransition,
                 ) { result ->
                     if (result is SelectorTestSearchSubjectResult.Success) {
                         SelectorTestSubjectResultLazyRow(
                             items = result.subjects,
-                            state.selectedSubjectIndex,
+                            presentation.selectedSubjectIndex,
                             onSelect = { index, _ ->
-                                state.selectedSubjectIndex = index
+                                state.selectSubjectIndex(index)
                             },
                             modifier = Modifier.padding(top = verticalSpacing - 8.dp),
                         )
@@ -123,18 +130,18 @@ fun SharedTransitionScope.SelectorTestPane(
             }
         }
 
-        val selectedSubject = state.selectedSubject
+        val selectedSubject = presentation.selectedSubject
         if (selectedSubject != null) {
             item(span = { GridItemSpan(maxLineSpan) }) {
                 Column {
                     RefreshIndicatedHeadlineRow(
                         headline = { Text(SelectorConfigurationDefaults.STEP_NAME_2) },
-                        onRefresh = { state.episodeListSearcher.restartCurrentSearch() },
-                        result = state.episodeListSearchSelectResult,
+                        onRefresh = { state.restartCurrentEpisodeSearch() },
+                        result = presentation.episodeListSearchResult,
                         Modifier.padding(top = verticalSpacing),
                     )
 
-                    val url = state.selectedSubject?.subjectDetailsPageUrl ?: ""
+                    val url = selectedSubject.subjectDetailsPageUrl
                     val clipboard = LocalClipboardManager.current
                     val toaster = LocalToaster.current
                     Row(
@@ -166,7 +173,7 @@ fun SharedTransitionScope.SelectorTestPane(
 
                     Box(Modifier.height(4.dp), contentAlignment = Alignment.Center) {
                         FastLinearProgressIndicator(
-                            state.episodeListSearcher.isSearching,
+                            presentation.isSearchingEpisode,
                             delayMillis = 0,
                             minimumDurationMillis = 300,
                         )
@@ -174,9 +181,10 @@ fun SharedTransitionScope.SelectorTestPane(
                 }
             }
 
-            val result = state.episodeListSearchSelectResult
+            val result = presentation.episodeListSearchResult
             if (result is SelectorTestEpisodeListResult.Success) {
-                if (result.channels != null) {
+                val channels = result.channels
+                if (channels != null) {
                     item(span = { GridItemSpan(maxLineSpan) }) {
                         Row(
                             Modifier
@@ -185,16 +193,16 @@ fun SharedTransitionScope.SelectorTestPane(
                             horizontalArrangement = Arrangement.spacedBy(16.dp),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text("${result.channels.size} 线路")
+                            Text("${channels.size} 线路")
                             LazyRow(
                                 Modifier,
                                 horizontalArrangement = Arrangement.spacedBy(16.dp),
                             ) {
-                                items(result.channels) {
+                                items(channels) {
                                     FilterChip(
-                                        selected = state.filterByChannel == it,
+                                        selected = presentation.filterByChannel == it,
                                         onClick = {
-                                            state.filterByChannel = if (state.filterByChannel == it) null else it
+                                            state.filterByChannel(if (presentation.filterByChannel == it) null else it)
                                         },
                                         label = { Text(it) },
                                     )
@@ -205,7 +213,7 @@ fun SharedTransitionScope.SelectorTestPane(
                 }
 
                 items(
-                    state.filteredEpisodes ?: emptyList(),
+                    presentation.filteredEpisodes ?: emptyList(),
                     key = { it.id.toString() },
                     contentType = { 1 },
                 ) { episode ->

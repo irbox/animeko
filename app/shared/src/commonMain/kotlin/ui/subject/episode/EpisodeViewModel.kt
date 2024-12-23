@@ -17,7 +17,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.paging.cachedIn
 import androidx.paging.map
+import kotlinx.collections.immutable.persistentHashSetOf
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -29,10 +32,12 @@ import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.emptyFlow
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
@@ -41,6 +46,7 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.transformLatest
 import kotlinx.coroutines.withContext
 import me.him188.ani.app.data.models.episode.renderEpisodeEp
+import me.him188.ani.app.data.models.preference.MediaSelectorSettings
 import me.him188.ani.app.data.models.preference.VideoScaffoldConfig
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.models.subject.SubjectProgressInfo
@@ -49,6 +55,7 @@ import me.him188.ani.app.data.repository.episode.AnimeScheduleRepository
 import me.him188.ani.app.data.repository.episode.BangumiCommentRepository
 import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
 import me.him188.ani.app.data.repository.media.EpisodePreferencesRepository
+import me.him188.ani.app.data.repository.media.SelectorMediaSourceEpisodeCacheRepository
 import me.him188.ani.app.data.repository.player.DanmakuRegexFilterRepository
 import me.him188.ani.app.data.repository.player.EpisodePlayHistoryRepository
 import me.him188.ani.app.data.repository.subject.SubjectCollectionRepository
@@ -90,8 +97,10 @@ import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateLoader
 import me.him188.ani.app.ui.subject.episode.details.EpisodeCarouselState
 import me.him188.ani.app.ui.subject.episode.details.EpisodeDetailsState
 import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSelectorPresentation
+import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSelectorState
 import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSourceInfoProvider
 import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSourceResultsPresentation
+import me.him188.ani.app.ui.subject.episode.statistics.VideoLoadingState
 import me.him188.ani.app.ui.subject.episode.statistics.VideoStatistics
 import me.him188.ani.app.ui.subject.episode.video.DanmakuLoaderImpl
 import me.him188.ani.app.ui.subject.episode.video.DanmakuStatistics
@@ -113,6 +122,7 @@ import me.him188.ani.danmaku.api.DanmakuPresentation
 import me.him188.ani.danmaku.ui.DanmakuConfig
 import me.him188.ani.datasources.api.PackedDate
 import me.him188.ani.datasources.api.source.MediaFetchRequest
+import me.him188.ani.datasources.api.source.MediaSourceKind
 import me.him188.ani.datasources.api.topic.UnifiedCollectionType
 import me.him188.ani.datasources.api.topic.isDoneOrDropped
 import me.him188.ani.utils.coroutines.cancellableCoroutineScope
@@ -123,7 +133,9 @@ import me.him188.ani.utils.logging.info
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
 import kotlin.math.max
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
+import kotlin.time.Duration.Companion.seconds
 
 
 @Stable
@@ -163,7 +175,7 @@ abstract class EpisodeViewModel : AbstractViewModel(), HasBackgroundScope {
     /**
      * "数据源" bottom sheet 内容
      */
-    abstract val mediaSelectorPresentation: MediaSelectorPresentation
+    abstract val mediaSelectorState: MediaSelectorState
 
     /**
      * "数据源" bottom sheet 中的每个数据源的结果
@@ -244,6 +256,7 @@ private class EpisodeViewModelImpl(
     private val bangumiCommentService: BangumiCommentService by inject()
     private val bangumiCommentRepository: BangumiCommentRepository by inject()
     private val episodePlayHistoryRepository: EpisodePlayHistoryRepository by inject()
+    private val selectorMediaSourceEpisodeCacheRepository: SelectorMediaSourceEpisodeCacheRepository by inject()
 
     private val subjectCollection = subjectCollectionRepository.subjectCollectionFlow(subjectId)
     private val subjectInfo = subjectCollection.map { it.subjectInfo }
@@ -277,18 +290,18 @@ private class EpisodeViewModelImpl(
      *
      * 之所以需要这个状态, 是因为当切换 EP 时, [mediaFetchSession] 会变更,
      * 随后 [MediaFetchSession.cumulativeResults] 会传递给 [mediaSelector],
-     * 但是 [MediaSelector.mediaList] 是 share 在后台的, 也就是说它可能会在任意时间之后才会发现 [mediaFetchSession] 有更新.
+     * 但是 [MediaSelector.filteredCandidatesMedia] 是 share 在后台的, 也就是说它可能会在任意时间之后才会发现 [mediaFetchSession] 有更新.
      *
-     * 这就导致当切换 EP 后, [MediaSelector.mediaList] 会有一段时间仍然是旧的值.
+     * 这就导致当切换 EP 后, [MediaSelector.filteredCandidatesMedia] 会有一段时间仍然是旧的值.
      *
      * 问题在于, [mediaFetchSession] 的变更会触发 [MediaSelectorAutoSelect.selectCached].
-     * 自动选择可能比 [MediaSelector.mediaList] 更新更早, 所以自动选择就会用久的 `mediaList` 选择缓存, 导致将会播放旧的视频.
+     * 自动选择可能比 [MediaSelector.filteredCandidatesMedia] 更新更早, 所以自动选择就会用久的 `mediaList` 选择缓存, 导致将会播放旧的视频.
      *
      *
      * 因此我们增加 [switchEpisodeCompleted], 在操作 EP 时, 先将其设置为 `false`, 然后再修改 [episodeId],
      * 并在 [mediaSelector] 更新时设置为 true.
      *
-     * 这样也并不是一定安全的, 有可能在我们修改 [episodeId] 后, 正好旧的查询触发了 [MediaSelector.mediaList] 更新,
+     * 这样也并不是一定安全的, 有可能在我们修改 [episodeId] 后, 正好旧的查询触发了 [MediaSelector.filteredCandidatesMedia] 更新,
      * 就导致 [switchEpisodeCompleted] 被设置为 `true`, [MediaSelectorAutoSelect.selectCached] 仍然会参考旧的 `mediaList` 选择缓存.
      *
      * 但是这种情况发生的概率比较小, 仅限于后台还有一个查询正在进行的时候用户切换了 EP, 并且旧的 EP 要至少有一个缓存, 而且恰好在一个比较短的时间内旧的查询完成了.
@@ -309,6 +322,9 @@ private class EpisodeViewModelImpl(
             mediaFetchSession.flatMapLatest { it.cumulativeResults },
         )
         .apply {
+            val mediaSelectorSettingsFlow = settingsRepository.mediaSelectorSettings.flow
+            val preferKindFlow = mediaSelectorSettingsFlow.map { it.preferKind }
+
             autoSelect.run {
 
                 launchInBackground {
@@ -316,8 +332,56 @@ private class EpisodeViewModelImpl(
                         awaitSwitchEpisodeCompleted()
                         awaitCompletedAndSelectDefault(
                             it,
-                            settingsRepository.mediaSelectorSettings.flow.map { it.preferKind },
+                            preferKindFlow,
                         )
+                    }
+                }
+                launchInBackground {
+                    // 快速自动选择数据源. 当按数据源顺序排序, 当最高排序的数据源查询完成后立即自动选择. #1322
+                    mediaFetchSession.collectLatest { session ->
+                        awaitSwitchEpisodeCompleted()
+                        val mediaSelectorSettings = mediaSelectorSettingsFlow.first()
+                        if (!mediaSelectorSettings.fastSelectWebKind) {
+                            return@collectLatest
+                        }
+
+                        suspend fun doSelect(allowNonPreferred: Flow<Boolean>) = fastSelectSources(
+                            session,
+                            mediaSourceManager.allInstances.first() // no need to subscribe to changes
+                                .filter { it.source.kind == MediaSourceKind.WEB }
+                                .map { it.mediaSourceId },
+                            preferKind = preferKindFlow,
+                            overrideUserSelection = false,
+                            blacklistMediaIds = emptySet(),
+                            allowNonPreferredFlow = allowNonPreferred,
+                        )
+
+                        var result = doSelect(
+                            allowNonPreferred = flow {
+                                when (val delay = mediaSelectorSettings.fastSelectWebKindAllowNonPreferredDelay) {
+                                    Duration.ZERO -> {
+                                        emit(true)
+                                    }
+
+                                    Duration.INFINITE -> {
+                                        emit(false)
+                                    }
+
+                                    else -> {
+                                        emit(false)
+                                        delay(delay)
+                                        emit(true)
+                                    }
+                                }
+                            },
+                        )
+                        if (result == null && mediaSelectorSettings.fastSelectWebKindAllowNonPreferredDelay != Duration.INFINITE) {
+                            // 所有数据源查询完成, 仍然没有选择到, 有可能是 `allowNonPreferred` 一直为 `false`. 所以我们要最后再尝试 select 一次
+                            result = doSelect(
+                                allowNonPreferred = flowOf(true),
+                            )
+                        }
+                        logger.info { "fastSelectSources result: $result" }
                     }
                 }
                 launchInBackground {
@@ -344,7 +408,7 @@ private class EpisodeViewModelImpl(
                 }
             }
             launchInBackground {
-                mediaList.collect {
+                filteredCandidatesMedia.collect {
                     switchEpisodeCompleted.value = true
                 }
             }
@@ -354,8 +418,8 @@ private class EpisodeViewModelImpl(
         getSourceInfoFlow = { mediaSourceManager.infoFlowByMediaSourceId(it) },
     )
 
-    override val mediaSelectorPresentation: MediaSelectorPresentation =
-        MediaSelectorPresentation(mediaSelector, mediaSourceInfoProvider, backgroundScope.coroutineContext)
+    override val mediaSelectorState: MediaSelectorState =
+        MediaSelectorPresentation(mediaSelector, mediaSourceInfoProvider, backgroundScope)
 
     override val mediaSourceResultsPresentation: MediaSourceResultsPresentation =
         MediaSourceResultsPresentation(
@@ -385,6 +449,7 @@ private class EpisodeViewModelImpl(
         }
         if (positionMillis in 0..<durationMillis) {
             launchInBackground {
+                logger.info { "Saving position for epId=$epId: ${positionMillis.milliseconds}" }
                 episodePlayHistoryRepository.saveOrUpdate(epId, positionMillis)
             }
         }
@@ -396,6 +461,54 @@ private class EpisodeViewModelImpl(
         mediaFetchSession.flatMapLatest { it.hasCompleted }.map { !it.allCompleted() },
         backgroundScope.coroutineContext,
     )
+
+    init { // after playerLauncher
+        launchInBackground {
+            // 播放失败时自动切换下一个 media.
+            // 即使是 BT 出错, 我们也会尝试切换到下一个 WEB 类型的数据源, 而不是继续尝试 BT.
+            settingsRepository.videoScaffoldConfig.flow.map { it.autoSwitchMediaOnPlayerError }
+                .collectLatest { autoSwitchMediaOnPlayerError ->
+                    if (!autoSwitchMediaOnPlayerError) {
+                        // 设置关闭, 不要自动切换
+                        return@collectLatest
+                    }
+
+                    mediaFetchSession.collectLatest { session ->
+                        var blacklistedMediaIds = persistentHashSetOf<String>()
+                        combine(
+                            playerLauncher.videoLoadingState, // 解析链接出错 (未匹配到链接)
+                            playerState.state, // 解析成功, 但播放器出错 (无法链接到链接, 例如链接错误)
+                        ) { videoLoadingState, playerState ->
+                            videoLoadingState is VideoLoadingState.Failed || playerState == PlaybackState.ERROR
+                        }.distinctUntilChanged()
+                            .collectLatest { isError ->
+                                if (isError) {
+                                    // 播放出错了
+                                    logger.info { "Player errored, automatically switching to next media" }
+
+                                    // 将当前播放的 mediaId 加入黑名单
+                                    mediaSelector.selected.value?.let {
+                                        blacklistedMediaIds = blacklistedMediaIds.add(it.mediaId) // thread-safe
+                                    }
+
+                                    delay(1.seconds) // 稍等让用户看到播放出错
+                                    val result = mediaSelector.autoSelect.fastSelectSources(
+                                        session,
+                                        mediaSourceManager.allInstances.first() // no need to subscribe to changes
+                                            .filter { it.source.kind == MediaSourceKind.WEB }
+                                            .map { it.mediaSourceId },
+                                        preferKind = settingsRepository.mediaSelectorSettings.flow.map<MediaSelectorSettings, MediaSourceKind?> { it.preferKind },
+                                        overrideUserSelection = true, // Note: 覆盖用户选择
+                                        blacklistMediaIds = blacklistedMediaIds,
+                                        allowNonPreferredFlow = flowOf(true), // 偏好的如果全都播放错误了, 允许播放非偏好的
+                                    )
+                                    logger.info { "Player errored, automatically switched to next media: $result" }
+                                } // else: cancel selection
+                            }
+                    }
+                }
+        }
+    }
 
     override val videoStatistics: VideoStatistics get() = playerLauncher.videoStatistics
 
@@ -510,9 +623,8 @@ private class EpisodeViewModelImpl(
 
     override val editableSubjectCollectionTypeState: EditableSubjectCollectionTypeState =
         EditableSubjectCollectionTypeState(
-            selfCollectionType = subjectCollection
-                .map { it.collectionType }
-                .produceState(UnifiedCollectionType.NOT_COLLECTED),
+            selfCollectionTypeFlow = subjectCollection
+                .map { it.collectionType },
             hasAnyUnwatched = {
                 val collections =
                     episodeCollectionsFlow.firstOrNull() ?: return@EditableSubjectCollectionTypeState true
@@ -646,6 +758,9 @@ private class EpisodeViewModelImpl(
     )
 
     override fun stopPlaying() {
+        launchInBackground {
+            selectorMediaSourceEpisodeCacheRepository.clearSubjectAndEpisodeCache()
+        }
         // 退出播放页前保存播放进度
         savePlayProgress()
         playerState.stop()
@@ -735,10 +850,15 @@ private class EpisodeViewModelImpl(
                     if (!enabled) return@collectLatest
 
                     playerState.state.collect { playback ->
-                        if (playback != PlaybackState.FINISHED) return@collect
-                        launchInMain {// state changes must be in main thread
+                        if (playback == PlaybackState.FINISHED
+                            && playerState.videoProperties.value.let { prop ->
+                                prop != null && prop.durationMillis > 0L && prop.durationMillis - playerState.currentPositionMillis.value < 5000
+                            }
+                        ) {
                             logger.info("播放完毕，切换下一集")
-                            episodeSelectorState.takeIf { it.hasNextEpisode }?.selectNext()
+                            launchInMain {// state changes must be in main thread
+                                episodeSelectorState.takeIf { it.hasNextEpisode }?.selectNext()
+                            }
                         }
                     }
                 }
@@ -779,7 +899,12 @@ private class EpisodeViewModelImpl(
                     PlaybackState.READY -> {
                         val positionMillis =
                             episodePlayHistoryRepository.getPositionMillisByEpisodeId(episodeId = episodeId.value)
-                        positionMillis?.let {
+                        if (positionMillis == null) {
+                            logger.info { "Did not find saved position" }
+                        } else {
+                            logger.info { "Loaded saved position: $positionMillis, waiting for video properties" }
+                            playerState.videoProperties.filter { it != null && it.durationMillis > 0L }.firstOrNull()
+                            logger.info { "Loaded saved position: $positionMillis, video properties ready, seeking" }
                             withContext(Dispatchers.Main) { // android must call in main thread
                                 playerState.seekTo(positionMillis)
                             }
@@ -788,8 +913,14 @@ private class EpisodeViewModelImpl(
 
                     PlaybackState.PAUSED -> savePlayProgress()
 
-                    PlaybackState.FINISHED ->
-                        episodePlayHistoryRepository.remove(episodeId.value)
+                    PlaybackState.FINISHED -> {
+                        if (playerState.videoProperties.value.let { it != null && it.durationMillis > 0L }) {
+                            // 视频长度有效, 说明正常播放中
+                            episodePlayHistoryRepository.remove(episodeId.value)
+                        } else {
+                            // 视频加载失败或者在切换数据源时又切换了另一个数据源, 不要删除记录
+                        }
+                    }
 
                     else -> Unit
                 }

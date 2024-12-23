@@ -60,6 +60,7 @@ import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import me.him188.ani.app.data.models.episode.displayName
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.domain.session.AuthState
@@ -81,7 +82,7 @@ import me.him188.ani.app.ui.subject.episode.details.components.DanmakuMatchInfoG
 import me.him188.ani.app.ui.subject.episode.details.components.EpisodeWatchStatusButton
 import me.him188.ani.app.ui.subject.episode.details.components.PlayingEpisodeItem
 import me.him188.ani.app.ui.subject.episode.details.components.PlayingEpisodeItemDefaults
-import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSelectorPresentation
+import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSelectorState
 import me.him188.ani.app.ui.subject.episode.mediaFetch.MediaSourceResultsPresentation
 import me.him188.ani.app.ui.subject.episode.statistics.DanmakuLoadingState
 import me.him188.ani.app.ui.subject.episode.statistics.DanmakuMatchInfoSummaryRow
@@ -126,7 +127,7 @@ fun EpisodeDetails(
     editableSubjectCollectionTypeState: EditableSubjectCollectionTypeState,
     danmakuStatistics: DanmakuStatistics,
     videoStatistics: VideoStatistics,
-    mediaSelectorPresentation: MediaSelectorPresentation,
+    mediaSelectorState: MediaSelectorState,
     mediaSourceResultsPresentation: MediaSourceResultsPresentation,
     authState: AuthState,
     onSwitchEpisode: (episodeId: Int) -> Unit,
@@ -152,6 +153,7 @@ fun EpisodeDetails(
                     onLoadErrorRetry = { state.subjectDetailsStateLoader.reload(state.subjectId) },
                     showTopBar = false,
                     showBlurredBackground = false,
+                    navigationIcon = {},
                 )
             }
         }
@@ -189,7 +191,8 @@ fun EpisodeDetails(
             // 推荐一些状态修改操作
 
             if (authState.isKnownLoggedIn) {
-                when (editableSubjectCollectionTypeState.selfCollectionType) {
+                val editableSubjectCollectionTypePresentation by editableSubjectCollectionTypeState.presentationFlow.collectAsStateWithLifecycle()
+                when (editableSubjectCollectionTypePresentation.selfCollectionType) {
                     UnifiedCollectionType.NOT_COLLECTED -> {
                         SubjectCollectionTypeSuggestions.Collect(editableSubjectCollectionTypeState)
                     }
@@ -248,7 +251,7 @@ fun EpisodeDetails(
                                             UnifiedCollectionType.DONE,
                                         )
                                     },
-                                    enabled = !episodeCarouselState.isSettingCollectionType,
+                                    enabled = !episodeCarouselState.isSettingCollectionType.collectAsStateWithLifecycle().value,
                                 )
                             }
                         },
@@ -287,7 +290,7 @@ fun EpisodeDetails(
                                     contentWindowInsets = { BottomSheetDefaults.windowInsets.add(WindowInsets.desktopTitleBar()) },
                                 ) {
                                     EpisodePlayMediaSelector(
-                                        mediaSelectorPresentation,
+                                        mediaSelectorState,
                                         mediaSourceResultsPresentation,
                                         onDismissRequest = { showMediaSelector = false },
                                         onSelected = { showMediaSelector = false },

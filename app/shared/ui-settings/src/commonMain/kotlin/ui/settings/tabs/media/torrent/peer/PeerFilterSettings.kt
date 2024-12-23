@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.WindowInsetsSides
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -45,15 +46,15 @@ import me.him188.ani.app.ui.adaptive.AniTopAppBarDefaults
 import me.him188.ani.app.ui.foundation.IconButton
 import me.him188.ani.app.ui.foundation.navigation.BackHandler
 import me.him188.ani.app.ui.foundation.theme.AniThemeDefaults
-import me.him188.ani.app.ui.foundation.widgets.TopAppBarGoBackButton
+import me.him188.ani.app.ui.foundation.widgets.BackNavigationIconButton
 import me.him188.ani.app.ui.settings.framework.components.SettingsScope
-import me.him188.ani.app.ui.settings.tabs.media.torrent.peer.blocklist.BlockListEditPane
 
 @Composable
 fun PeerFilterSettingsPage(
     state: PeerFilterSettingsState,
     modifier: Modifier = Modifier,
-    navigator: ThreePaneScaffoldNavigator<Nothing> = rememberListDetailPaneScaffoldNavigator()
+    navigator: ThreePaneScaffoldNavigator<Nothing> = rememberListDetailPaneScaffoldNavigator(),
+    navigationIcon: @Composable () -> Unit = {},
 ) {
     Surface(color = AniThemeDefaults.pageContentBackgroundColor) {
         AniListDetailPaneScaffold(
@@ -64,6 +65,13 @@ fun PeerFilterSettingsPage(
                     title = { AniTopAppBarDefaults.Title("Peer 过滤和屏蔽设置") },
                     state = state,
                     windowInsets = paneContentWindowInsets.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal),
+                    navigationIcon = {
+                        if (navigator.canNavigateBack()) {
+                            BackNavigationIconButton({ navigator.navigateBack() })
+                        } else {
+                            navigationIcon()
+                        }
+                    },
                 )
             },
             listPaneContent = {
@@ -72,8 +80,12 @@ fun PeerFilterSettingsPage(
                     showIpBlockingItem = listDetailLayoutParameters.isSinglePane,
                     onClickIpBlockSettings = { navigator.navigateTo(ThreePaneScaffoldRole.Primary) },
                     modifier = Modifier
-                        .paneContentPadding()
-                        .paneWindowInsetsPadding(),
+                        .paneContentPadding(
+                            extraStart = -SettingsScope.itemHorizontalPadding,
+                            extraEnd = -SettingsScope.itemHorizontalPadding,
+                        )
+                        .paneWindowInsetsPadding()
+                        .padding(horizontal = SettingsScope.itemExtraHorizontalPadding),
                 )
             },
             detailPane = {
@@ -89,15 +101,16 @@ fun PeerFilterSettingsPage(
                 }
 
                 Box(Modifier.consumeWindowInsets(paneContentWindowInsets.only(WindowInsetsSides.Top))) {
-                    BlockListEditPane(
-                        blockedIpList = filteredList,
+                    BlackListEditPane(
+                        ipBlackList = filteredList,
                         showTitle = !listDetailLayoutParameters.isSinglePane,
                         modifier = Modifier
                             .paneContentPadding(
                                 extraStart = -SettingsScope.itemHorizontalPadding,
                                 extraEnd = -SettingsScope.itemHorizontalPadding,
                             )
-                            .paneWindowInsetsPadding(),
+                            .paneWindowInsetsPadding()
+                            .padding(horizontal = SettingsScope.itemExtraHorizontalPadding),
                         onAdd = { state.addBlockedIp(it) },
                         onRemove = { state.removeBlockedIp(it) },
                     )
@@ -115,6 +128,7 @@ private fun SearchBlockedIpTopAppBar(
     state: PeerFilterSettingsState,
     title: @Composable () -> Unit,
     windowInsets: WindowInsets = ScaffoldDefaults.contentWindowInsets,
+    navigationIcon: @Composable () -> Unit = {},
 ) {
     BackHandler(enableSearch && state.searchingBlockedIp) {
         state.stopSearchBlockedIp()
@@ -124,7 +138,7 @@ private fun SearchBlockedIpTopAppBar(
         title = {
             if (enableSearch && state.searchingBlockedIp) SearchBlockedIp(state) else title()
         },
-        navigationIcon = { TopAppBarGoBackButton() },
+        navigationIcon = navigationIcon,
         avatar = {
             if (enableSearch && !state.searchingBlockedIp) {
                 IconButton({ state.startSearchBlockedIp() }) {

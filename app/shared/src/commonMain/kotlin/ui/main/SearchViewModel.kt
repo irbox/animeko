@@ -10,14 +10,17 @@
 package me.him188.ani.app.ui.main
 
 import androidx.compose.runtime.Stable
-import androidx.compose.runtime.mutableStateOf
+import androidx.paging.cachedIn
 import androidx.paging.map
-import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import me.him188.ani.app.data.models.subject.SubjectInfo
 import me.him188.ani.app.data.repository.episode.EpisodeCollectionRepository
+import me.him188.ani.app.data.repository.subject.BangumiSubjectSearchCompletionRepository
 import me.him188.ani.app.data.repository.subject.SubjectSearchHistoryRepository
 import me.him188.ani.app.data.repository.subject.SubjectSearchRepository
 import me.him188.ani.app.data.repository.user.SettingsRepository
@@ -31,48 +34,60 @@ import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateFactory
 import me.him188.ani.app.ui.subject.details.state.SubjectDetailsStateLoader
 import org.koin.core.component.KoinComponent
 import org.koin.core.component.inject
+import kotlin.time.Duration.Companion.milliseconds
 
 @Stable
 class SearchViewModel : AbstractViewModel(), KoinComponent {
     private val searchHistoryRepository: SubjectSearchHistoryRepository by inject()
+    private val bangumiSubjectSearchCompletionRepository: BangumiSubjectSearchCompletionRepository by inject()
 
     private val episodeCollectionRepository: EpisodeCollectionRepository by inject()
     private val subjectSearchRepository: SubjectSearchRepository by inject()
     private val subjectDetailsStateFactory: SubjectDetailsStateFactory by inject()
     private val settingsRepository: SettingsRepository by inject()
 
-    private val queryState = mutableStateOf("")
+    private val nsfwSettingFlow = settingsRepository.uiSettings.flow.map { it.searchSettings.nsfwMode }
+
+    private val queryFlow = MutableStateFlow("")
 
     val searchPageState: SearchPageState = SearchPageState(
-        searchHistoryState = searchHistoryRepository.getHistoryFlow().produceState(emptyList()),
-        suggestionsState = searchHistoryRepository.getHistoryFlow()
-            .produceState(emptyList()),// todo: suggestions
+        searchHistoryPager = searchHistoryRepository.getHistoryPager(),
+        suggestionsPager = queryFlow.debounce(200.milliseconds).flatMapLatest {
+            bangumiSubjectSearchCompletionRepository.completionsFlow(it)
+        },
+        queryFlow = queryFlow,
+        setQuery = { queryFlow.value = it },
         onRequestPlay = { info ->
             episodeCollectionRepository.subjectEpisodeCollectionInfosFlow(info.subjectId).first().firstOrNull()?.let {
                 SearchPageState.EpisodeTarget(info.subjectId, it.episodeInfo.episodeId)
             }
         },
-        queryState = queryState,
         searchState = PagingSearchState(
             createPager = {
+                // 搜索总是会包含 NSFW
                 subjectSearchRepository.searchSubjects(
-                    SubjectSearchQuery(keyword = queryState.value),
+                    SubjectSearchQuery(keyword = queryFlow.value),
                     useNewApi = {
-                        settingsRepository.uiSettings.flow.map { it.searchSettings.enableNewSearchSubjectApi }
-                            .first()
+                        settingsRepository.uiSettings.flow.map { it.searchSettings.enableNewSearchSubjectApi }.first()
                     },
-                ).map { data ->
-                    data.map {
+                ).combine(nsfwSettingFlow) { data, nsfwMode ->
+                    // 当 settings 变更时, 会重新计算所有的 SubjectPreviewItemInfo 以更新其显示状态, 但不会重新搜索.
+                    data.map { subject ->
                         SubjectPreviewItemInfo.compute(
-                            it.subjectInfo,
-                            it.mainEpisodeCount,
-                            it.lightSubjectRelations.lightRelatedPersonInfoList,
-                            it.lightSubjectRelations.lightRelatedCharacterInfoList,
+                            subject.subjectInfo,
+                            subject.mainEpisodeCount,
+                            nsfwMode,
+                            subject.lightSubjectRelations.lightRelatedPersonInfoList,
+                            subject.lightSubjectRelations.lightRelatedCharacterInfoList,
                         )
                     }
-                }.flowOn(Dispatchers.Default)
+                    // 我们必须保证 data 的数量和 map 后的数量一致, 否则会导致 Pager 搜索下一页时使用的 offset 有误.
+                }.cachedIn(backgroundScope)
             },
         ),
+        onRemoveHistory = {
+            searchHistoryRepository.removeHistory(it)
+        },
         backgroundScope = backgroundScope,
         onStartSearch = { query ->
             subjectDetailsStateLoader.clear()

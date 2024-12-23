@@ -31,6 +31,7 @@ else ()
     if (WIN32)
         add_compile_definitions(TORRENT_DISABLE_ENCRYPTION=true)
         add_compile_definitions(TORRENT_USE_OPENSSL)
+        find_package(OpenSSL)
     endif ()
 
     if (WIN32)
@@ -109,7 +110,12 @@ FetchContent_MakeAvailable(libtorrent)
 
 if (NOT ANDROID)
     # JNI
+    set(JAVA_AWT_LIBRARY NotNeeded)
+    set(JAVA_JVM_LIBRARY NotNeeded)
+#    set(JAVA_INCLUDE_PATH2 NotNeeded)
+#    set(JAVA_AWT_INCLUDE_PATH NotNeeded)
     find_package(JNI REQUIRED)
+    
     include_directories(${JNI_INCLUDE_DIRS})
 endif ()
 
@@ -141,5 +147,16 @@ target_include_directories(anitorrent PRIVATE include)
 if (ANDROID)
     target_link_libraries(anitorrent PRIVATE torrent-rasterbar android log)
 else ()
-    target_link_libraries(anitorrent PRIVATE torrent-rasterbar ${JNI_LIBRARIES})
+
+    # 假设 JNI_INCLUDE_DIRS 是一个包含多个路径的列表
+    set(FILTERED_JNI_LIBRARIES "")
+
+    # 遍历 JNI_INCLUDE_DIRS，移除包含 "NotNeeded" 的值
+    foreach(dir ${JNI_LIBRARIES})
+        if(NOT dir MATCHES "NotNeeded")
+            list(APPEND FILTERED_JNI_LIBRARIES ${dir})
+        endif()
+    endforeach()
+
+    target_link_libraries(anitorrent PRIVATE torrent-rasterbar ${FILTERED_JNI_LIBRARIES})
 endif ()

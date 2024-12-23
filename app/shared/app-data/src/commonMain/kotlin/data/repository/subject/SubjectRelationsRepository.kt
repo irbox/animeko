@@ -9,18 +9,23 @@
 
 package me.him188.ani.app.data.repository.subject
 
+import androidx.collection.intListOf
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.onEach
 import me.him188.ani.app.data.models.subject.CharacterInfo
 import me.him188.ani.app.data.models.subject.PersonInfo
 import me.him188.ani.app.data.models.subject.RelatedCharacterInfo
 import me.him188.ani.app.data.models.subject.RelatedPersonInfo
+import me.him188.ani.app.data.models.subject.SubjectCollectionInfo
+import me.him188.ani.app.data.network.AniSubjectRelationIndexService
 import me.him188.ani.app.data.network.BangumiSubjectService
 import me.him188.ani.app.data.network.BatchSubjectRelations
 import me.him188.ani.app.data.persistent.database.dao.RelatedCharacterView
@@ -33,6 +38,8 @@ import me.him188.ani.app.data.persistent.database.entity.PersonEntity
 import me.him188.ani.app.data.persistent.database.entity.SubjectCharacterRelationEntity
 import me.him188.ani.app.data.persistent.database.entity.SubjectPersonRelationEntity
 import me.him188.ani.app.data.repository.Repository
+import me.him188.ani.app.data.repository.RepositoryServiceUnavailableException
+import me.him188.ani.utils.logging.info
 import me.him188.ani.utils.platform.collections.mapToIntArray
 import me.him188.ani.utils.platform.currentTimeMillis
 import kotlin.coroutines.CoroutineContext
@@ -43,6 +50,21 @@ import kotlin.time.Duration.Companion.milliseconds
 sealed class SubjectRelationsRepository(
     defaultDispatcher: CoroutineContext = Dispatchers.Default
 ) : Repository(defaultDispatcher) {
+    /**
+     * 获取指定条目的所有续集 ID 列表, 包含正片和 SP 等特殊剧集. (仅包含 Anime 类型)
+     */
+    abstract fun subjectSequelSubjectIdsFlow(subjectId: Int): Flow<List<Int>>
+
+    /**
+     * 获取指定条目的所有续集列表, 包含正片和 SP 等特殊剧集. (仅包含 Anime 类型)
+     */
+    abstract fun subjectSequelSubjectsFlow(subjectId: Int): Flow<List<SubjectCollectionInfo>>
+
+    /**
+     * 获取指定条目的所有续集的名称列表, 包含正片和 SP 等特殊剧集, 并排除 [subjectId] 的名称. (仅包含 Anime 类型)
+     */
+    abstract fun subjectSequelSubjectNamesFlow(subjectId: Int): Flow<Set<String>>
+
     abstract fun subjectRelatedPersonsFlow(subjectId: Int): Flow<List<RelatedPersonInfo>>
     abstract fun subjectRelatedCharactersFlow(subjectId: Int): Flow<List<RelatedCharacterInfo>>
 }
@@ -52,10 +74,52 @@ class DefaultSubjectRelationsRepository(
     private val subjectRelationsDao: SubjectRelationsDao,
     private val bangumiSubjectService: BangumiSubjectService,
     private val subjectCollectionRepository: SubjectCollectionRepository,
+    private val aniSubjectRelationIndexService: AniSubjectRelationIndexService,
     defaultDispatcher: CoroutineContext = Dispatchers.Default,
     private val autoRefreshPeriod: Duration = 1.hours,
     private val cacheExpiry: Duration = 1.hours,
 ) : SubjectRelationsRepository(defaultDispatcher) {
+    override fun subjectSequelSubjectIdsFlow(subjectId: Int): Flow<List<Int>> = flow {
+        emit(
+            kotlinx.coroutines.withTimeoutOrNull(10_000) {
+                // 这服务极快, 不会超时. 10 秒还没完, 只能是服务器重启了一下, 正在构造索引
+                aniSubjectRelationIndexService.getSubjectSequelSubjects(subjectId)
+            }
+                ?: throw RepositoryServiceUnavailableException("Failed to fetch subject sequel subjects for $subjectId due to timeout"),
+        )
+    }.flowOn(defaultDispatcher) // no auto refresh
+
+    override fun subjectSequelSubjectsFlow(subjectId: Int): Flow<List<SubjectCollectionInfo>> {
+        // no auto refresh
+        return subjectSequelSubjectIdsFlow(subjectId)
+            .flatMapLatest { list ->
+                if (list.isEmpty()) { // combine(emptyList()) 不会 emit
+                    return@flatMapLatest flowOf(emptyList())
+                }
+                combine(
+                    list.map { relatedSubjectId ->
+                        subjectCollectionRepository.subjectCollectionFlow(relatedSubjectId)
+                    },
+                ) {
+                    it.toList()
+                }
+            }.flowOn(defaultDispatcher)
+    }
+
+    override fun subjectSequelSubjectNamesFlow(subjectId: Int): Flow<Set<String>> {
+        return subjectSequelSubjectsFlow(subjectId)
+            .combine(subjectCollectionRepository.subjectCollectionFlow(subjectId)) { list, requestingSubject ->
+                list.flatMapTo(mutableSetOf()) { it.subjectInfo.allNames }.apply {
+                    removeAll { sequelName ->
+                        // 如果续集名称存在于当前名称中, 则删除, 否则可能导致过滤掉当前季度的条目
+                        requestingSubject.subjectInfo.allNames.any { it.contains(sequelName, ignoreCase = true) }
+                    }
+                }
+            }.onEach {
+                logger.info { "subjectSequelSubjectNamesFlow($subjectId): " + it.joinToString() }
+            }.flowOn(defaultDispatcher)
+    }
+
     override fun subjectRelatedPersonsFlow(subjectId: Int): Flow<List<RelatedPersonInfo>> {
         return subjectCollectionRepository.subjectCollectionFlow(subjectId)
             .autoRefresh()
@@ -102,7 +166,7 @@ class DefaultSubjectRelationsRepository(
             }.flowOn(defaultDispatcher)
     }
 
-    private fun <T> Flow<T>.autoRefresh() = combine(refreshTicker()) { value, _ -> value }
+    private fun <T> Flow<T>.autoRefresh() = refreshTicker().flatMapLatest { this@autoRefresh }
 
     private fun refreshTicker() = flow {
         while (true) {
@@ -112,7 +176,7 @@ class DefaultSubjectRelationsRepository(
     }
 
     private suspend fun fetchAndSaveSubjectRelations(subjectId: Int) {
-        val (batch) = bangumiSubjectService.batchGetSubjectRelations(intArrayOf(subjectId), withCharacterActors = true)
+        val (batch) = bangumiSubjectService.batchGetSubjectRelations(intListOf(subjectId), withCharacterActors = true)
         subjectRelationsDao.upsertPersons(batch.allPersons.map { it.toEntity() }.toList())
         subjectRelationsDao.upsertCharacters(batch.relatedCharacterInfoList.map { it.character.toEntity() })
         subjectRelationsDao.upsertCharacterActors(batch.characterActorRelations().toList())

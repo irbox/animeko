@@ -15,7 +15,9 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
@@ -31,6 +33,7 @@ import me.him188.ani.app.domain.media.cache.storage.TestMediaCacheStorage
 import me.him188.ani.app.domain.media.fetch.MediaFetcherConfig
 import me.him188.ani.app.domain.media.fetch.MediaSourceMediaFetcher
 import me.him188.ani.app.domain.media.framework.TestMediaSelector
+import me.him188.ani.app.domain.media.selector.MaybeExcludedMedia
 import me.him188.ani.app.domain.media.selector.MediaSelector
 import me.him188.ani.app.domain.media.selector.MediaSelectorFactory
 import me.him188.ani.app.domain.mediasource.instance.createTestMediaSourceInstance
@@ -109,7 +112,8 @@ class EpisodeCacheStateTest {
                     subjectId: Int,
                     mediaList: Flow<List<Media>>,
                     flowCoroutineContext: CoroutineContext
-                ): MediaSelector = TestMediaSelector(mediaList)
+                ): MediaSelector =
+                    TestMediaSelector(mediaList.map { list -> list.map { MaybeExcludedMedia.Included(it) } })
             },
             storagesLazy = flowOf(listOf(TestMediaCacheStorage())),
         )
@@ -126,8 +130,8 @@ class EpisodeCacheStateTest {
         assertEquals(CacheRequestStage.Idle, state.currentStage)
         assertIs<EpisodeCacheStatus.Cached>(state.cacheStatus)
         assertEquals(true, state.canCache)
-        assertEquals(false, state.actionTasker.isRunning)
-        assertEquals(false, state.showProgressIndicator)
+        assertEquals(false, state.actionTasker.isRunning.first())
+        assertEquals(false, state.showProgressIndicator.first())
     }
 
     ///////////////////////////////////////////////////////////////////////////
@@ -183,7 +187,7 @@ class EpisodeCacheStateTest {
     @Test
     fun `showProgressIndicator is initially false`() = runComposeStateTest {
         val state = createEpisodeCacheState()
-        assertEquals(false, state.showProgressIndicator)
+        assertEquals(false, state.showProgressIndicator.first())
     }
 
     @Test
@@ -195,12 +199,12 @@ class EpisodeCacheStateTest {
         }
         takeSnapshot()
 
-        assertEquals(true, state.showProgressIndicator)
+        assertEquals(true, state.showProgressIndicator.first())
         deferred.complete(Unit)
         state.actionTasker.join()
 
         takeSnapshot()
-        assertEquals(false, state.showProgressIndicator)
+        assertEquals(false, state.showProgressIndicator.first())
     }
 
     @Test
@@ -210,7 +214,7 @@ class EpisodeCacheStateTest {
             .request(EpisodeCacheRequest(SubjectInfo.Empty, EpisodeInfo(1, EpisodeType.MainStory)))
 
         takeSnapshot()
-        assertEquals(true, state.showProgressIndicator)
+        assertEquals(true, state.showProgressIndicator.first())
     }
 
     @Test
@@ -234,7 +238,7 @@ class EpisodeCacheStateTest {
 
         takeSnapshot()
 
-        assertEquals(false, state.showProgressIndicator)
+        assertEquals(false, state.showProgressIndicator.first())
     }
 
     ///////////////////////////////////////////////////////////////////////////

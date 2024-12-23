@@ -133,6 +133,10 @@ object AniDesktop {
 //        System.setProperty("compose.interop.blending", "true")
 //    }
 
+    init {
+        System.setProperty("native.encoding", "UTF-8")
+    }
+
 
     private fun calculateWindowSize(
         desiredWidth: Dp,
@@ -210,6 +214,7 @@ object AniDesktop {
                     single<TorrentManager> {
                         DefaultTorrentManager.create(
                             coroutineScope.coroutineContext,
+                            get(),
                             get(),
                             get(),
                             baseSaveDir = {

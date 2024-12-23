@@ -9,24 +9,24 @@
 
 package me.him188.ani.app.data.persistent.database.dao
 
+import androidx.paging.PagingSource
 import androidx.room.Dao
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
 import androidx.room.Query
 import androidx.room.Upsert
-import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface SearchHistoryDao {
     @Upsert
     suspend fun insert(item: SearchHistoryEntity)
 
-    @Query("delete from `search_history` where `sequence`=:sequence")
-    suspend fun deleteBySequence(sequence: Int)
+    @Query("delete from `search_history` where `content`=:content")
+    suspend fun deleteByContent(content: String)
 
-    @Query("select * from `search_history` order by sequence desc")
-    fun all(): Flow<List<SearchHistoryEntity>>
+    @Query("select content from `search_history` order by sequence desc")
+    fun allPager(): PagingSource<Int, String>
 }
 
 @Entity(
